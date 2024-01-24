@@ -1,14 +1,25 @@
-#include <linux/fs.h>
-#include <linux/init.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
+#include "entrypoint.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("GrigAnd");
 MODULE_DESCRIPTION("Hello world");
 MODULE_VERSION("1.0");
 
-#define MAX_ENTRIES 10
+
+struct dentry *networkfs_lookup(struct inode *parent_inode, struct dentry *child_dentry, unsigned int flag) {
+    ino_t root;
+    struct inode *inode;
+    const char *name = child_dentry->d_name.name;
+    root = parent_inode->i_ino;
+    if (root == 100 && !strcmp(name, "test.txt")) {
+        inode = networkfs_get_inode(parent_inode->i_sb, NULL, S_IFREG, 101);
+        d_add(child_dentry, inode);
+    } else if (root == 100 && !strcmp(name, "dir")) {
+        inode = networkfs_get_inode(parent_inode->i_sb, NULL, S_IFDIR, 200);
+        d_add(child_dentry, inode);
+    }
+    return NULL;
+}
 
 int networkfs_iterate(struct file *filp, struct dir_context
                                              *ctx) {
@@ -47,7 +58,7 @@ int networkfs_iterate(struct file *filp, struct dir_context
 
         if (dir_emit(ctx, fsname, strlen(fsname), dino, ftype)) {
             ctx->pos += 1;
-            stored += 1;  // Increment stored if the entry is successfully emitted
+            stored += 1;
         }
 
         offset++;
@@ -56,19 +67,6 @@ int networkfs_iterate(struct file *filp, struct dir_context
 return stored;
 }
 
-struct file_operations networkfs_dir_ops =
-    {
-        .iterate = networkfs_iterate,
-};
-
-struct dentry *networkfs_lookup(struct inode *parent_inode, struct dentry *child_dentry, unsigned int flag) {
-    return NULL;
-}
-
-struct inode_operations networkfs_inode_ops =
-    {
-        .lookup = networkfs_lookup,
-};
 
 struct inode *networkfs_get_inode(struct super_block *sb, const struct inode *dir, umode_t mode, int i_ino) {
     struct inode *inode;
@@ -107,12 +105,6 @@ struct dentry *networkfs_mount(struct file_system_type *fs_type, int flags, cons
 void networkfs_kill_sb(struct super_block *sb) {
     printk(KERN_INFO "networkfs super block is destroyed. Unmount successfully.\n");
 }
-
-struct file_system_type networkfs_fs_type =
-    {
-        .name = "networkfs",
-        .mount = networkfs_mount,
-        .kill_sb = networkfs_kill_sb};
 
 int networkfs_init(void) {
     printk(KERN_INFO "Init\n");
