@@ -1,72 +1,171 @@
 #include "entrypoint.h"
 
+#include <linux/list.h>
+#include <linux/slab.h>
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("GrigAnd");
 MODULE_DESCRIPTION("Hello world");
 MODULE_VERSION("1.0");
 
+static int inode_counter = 101;
+
+struct entry {
+    char name[128];
+    unsigned char ftype;
+    ino_t ino;
+    ino_t parent_ino;
+    struct list_head list;
+};
+
+struct list_head entry_list;
+
+void add_entry(const char *name, unsigned char ftype, ino_t ino, ino_t parent_ino) {
+    struct entry *new_entry;
+    new_entry = kmalloc(sizeof(*new_entry), GFP_KERNEL);
+    if (new_entry) {
+        strncpy(new_entry->name, name, sizeof(new_entry->name));
+        new_entry->ftype = ftype;
+        new_entry->ino = ino;
+        new_entry->parent_ino = parent_ino;
+        INIT_LIST_HEAD(&new_entry->list);
+        list_add_tail(&new_entry->list, &entry_list);
+    }
+}
+
+void remove_entry(struct entry *entry) {
+    list_del(&entry->list);
+    kfree(entry);
+}
+
+void init_entries(void) {
+    INIT_LIST_HEAD(&entry_list);
+    add_entry("test.txt", DT_REG, inode_counter++, 100);
+    add_entry("test2.txt", DT_REG, inode_counter++, 100);
+    add_entry("dir", DT_DIR, inode_counter++, 100);
+    printk(KERN_INFO "entrys added\n");
+}
+
+int networkfs_create(struct user_namespace *uns, struct inode *parent_inode, struct dentry *child_dentry, umode_t mode, bool b) {
+    ino_t root;
+    struct inode *inode;
+    const char *name = child_dentry->d_name.name;
+    root = parent_inode->i_ino;
+
+    inode = networkfs_get_inode(parent_inode->i_sb, NULL, S_IFREG, inode_counter++);
+    inode->i_mode = S_IFREG | S_IRWXU | S_IRWXG | S_IRWXO;
+    d_add(child_dentry, inode);
+
+    add_entry(name, DT_REG, inode_counter++, root);
+
+    return 0;
+}
+
+int networkfs_mkdir(struct user_namespace *uns, struct inode *parent_inode, struct dentry *child_dentry, umode_t mode) {
+    ino_t root;
+    struct inode *inode;
+    const char *name = child_dentry->d_name.name;
+    root = parent_inode->i_ino;
+
+    inode = networkfs_get_inode(parent_inode->i_sb, NULL, S_IFDIR, inode_counter++);
+    inode->i_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
+    d_add(child_dentry, inode);
+
+    add_entry(name, DT_DIR, inode_counter++, root);
+
+    return 0;
+}
+
+int networkfs_rmdir(struct inode *parent_inode, struct dentry *child_dentry) {
+    ino_t root;
+    const char *name = child_dentry->d_name.name;
+    root = parent_inode->i_ino;
+
+    struct entry *entry;
+    list_for_each_entry(entry, &entry_list, list) {
+        if (entry->parent_ino == root && !strcmp(name, entry->name)) {
+            remove_entry(entry);
+            break;
+        }
+    }
+
+    return 0;
+}
+
+int networkfs_unlink(struct inode *parent_inode, struct dentry *child_dentry) {
+    ino_t root;
+    const char *name = child_dentry->d_name.name;
+    root = parent_inode->i_ino;
+
+    struct entry *entry;
+    list_for_each_entry(entry, &entry_list, list) {
+        if (entry->parent_ino == root && !strcmp(name, entry->name)) {
+            remove_entry(entry);
+            break;
+        }
+    }
+
+    return 0;
+}
 
 struct dentry *networkfs_lookup(struct inode *parent_inode, struct dentry *child_dentry, unsigned int flag) {
     ino_t root;
     struct inode *inode;
     const char *name = child_dentry->d_name.name;
     root = parent_inode->i_ino;
-    if (root == 100 && !strcmp(name, "test.txt")) {
-        inode = networkfs_get_inode(parent_inode->i_sb, NULL, S_IFREG, 101);
-        d_add(child_dentry, inode);
-    } else if (root == 100 && !strcmp(name, "dir")) {
-        inode = networkfs_get_inode(parent_inode->i_sb, NULL, S_IFDIR, 200);
-        d_add(child_dentry, inode);
+
+    struct entry *entry;
+    list_for_each_entry(entry, &entry_list, list) {
+        if (entry->parent_ino == root && !strcmp(name, entry->name)) {
+            inode = networkfs_get_inode(parent_inode->i_sb, NULL, entry->ftype, entry->ino);
+            inode->i_mode = S_IFREG | S_IRWXU | S_IRWXG | S_IRWXO;
+            d_add(child_dentry, inode);
+            break;
+        }
     }
+
     return NULL;
 }
 
-int networkfs_iterate(struct file *filp, struct dir_context
-                                             *ctx) {
-    char fsname[10];
+int networkfs_iterate(struct file *filp, struct dir_context *ctx) {
+    struct entry *entry;
     struct dentry *dentry;
     struct inode *inode;
     unsigned long offset;
     int stored;
-    unsigned char ftype;
     ino_t ino;
-    ino_t dino;
     dentry = filp->f_path.dentry;
     inode = dentry->d_inode;
     offset = filp->f_pos;
     stored = 0;
     ino = inode->i_ino;
 
-    while (true) {
-        if (ino == 100) {
-            if (offset == 0) {
-                strcpy(fsname, ".");
-                ftype = DT_DIR;
-                dino = ino;
-            } else if (offset == 1) {
-                strcpy(fsname, "..");
-                ftype = DT_DIR;
-                dino = dentry->d_parent->d_inode->i_ino;
-            } else if (offset == 2) {
-                strcpy(fsname, "test.txt");
-                ftype = DT_REG;
-                dino = 101;
-            } else {
-                return stored;
-            }
-        }
-
-        if (dir_emit(ctx, fsname, strlen(fsname), dino, ftype)) {
-            ctx->pos += 1;
-            stored += 1;
-        }
-
-        offset++;
+    if (offset >= 1) {
+        return 0;
     }
 
-return stored;
-}
+    printk(KERN_INFO "ino: %lu, offset: %lu\n", (unsigned long)ino, offset);
+    dir_emit(ctx, ".", 1, ino, DT_DIR);
+    ctx->pos += 1;
+    stored += 1;
+    offset++;
+    dir_emit(ctx, "..", 2, dentry->d_parent->d_inode->i_ino, DT_DIR);
+    ctx->pos += 1;
+    stored += 1;
+    offset++;
+    list_for_each_entry(entry, &entry_list, list) {
+        if (entry->parent_ino == ino) {
+            printk(KERN_INFO "entry: %s, %d, %lu, %lu\n", entry->name, entry->ftype, (unsigned long)entry->ino, (unsigned long)entry->parent_ino);
+            if (dir_emit(ctx, entry->name, strlen(entry->name), entry->ino, entry->ftype)) {
+                ctx->pos += 1;
+                stored += 1;
+                offset++;
+            }
+        }
+    }
 
+    return stored;
+}
 
 struct inode *networkfs_get_inode(struct super_block *sb, const struct inode *dir, umode_t mode, int i_ino) {
     struct inode *inode;
@@ -108,7 +207,10 @@ void networkfs_kill_sb(struct super_block *sb) {
 
 int networkfs_init(void) {
     printk(KERN_INFO "Init\n");
+    inode_counter = 101;
     int ret = register_filesystem(&networkfs_fs_type);
+    init_entries();
+
     if (ret != 0) {
         printk(KERN_ERR "Can't register file system");
     } else {

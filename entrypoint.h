@@ -9,15 +9,23 @@
 struct dentry *networkfs_lookup(struct inode *, struct dentry *, unsigned int);
 
 int networkfs_iterate(struct file *, struct dir_context *);
+int networkfs_unlink(struct inode *, struct dentry *);
 
 struct file_operations networkfs_dir_ops = {
     .iterate = networkfs_iterate,
 };
 
 struct dentry *networkfs_lookup(struct inode *, struct dentry *, unsigned int);
+int networkfs_create(struct user_namespace *, struct inode *, struct dentry *, umode_t, bool);
+int networkfs_mkdir(struct user_namespace *, struct inode *, struct dentry *, umode_t);
+int networkfs_rmdir(struct inode *, struct dentry *);
 
 struct inode_operations networkfs_inode_ops = {
     .lookup = networkfs_lookup,
+    .create = networkfs_create,
+    .unlink = networkfs_unlink,
+    .mkdir = networkfs_mkdir,
+    .rmdir = networkfs_rmdir,
 };
 
 struct inode *networkfs_get_inode(struct super_block *, const struct inode *, umode_t, int);
